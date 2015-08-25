@@ -1,0 +1,205 @@
+program New;
+{.include SRL/SRL/Misc/Smart.scar}
+{.include SRL/SRL.scar}
+{.include SRL/SRL/Reflection/Reflection.scar}
+
+const
+  PlayerTime = 10 * 60; //Time per player in seconds.
+
+procedure DeclarePlayers;
+begin
+
+  Smart_Server := 0;
+  Smart_Signed := True;
+  
+  HowManyPlayers := 1;
+  NumberOfPlayers(HowManyPlayers);
+  CurrentPlayer := 0;
+  
+  with Players[0] do
+  begin
+    Name := '';
+    Pass := '';
+    Nick := '';
+    Active := True;
+    Pin := '';
+    BoxRewards := ['mote', 'ostume', 'damant', 'ithril', 'oal', 'Gem', 'une', 'XP', 'oins'];
+    Strings[0] := 'draynor';
+    Strings[1] := 'willow';
+    Booleans[0] := False;  //Drop logs?
+  end;
+
+end;
+
+type
+
+  TBoolFuncArray = array of function: Boolean;
+  
+  TPlayerInfo = record
+    Bank: string;
+    Name: string;
+    Tree: string;
+    Dropping: Boolean;
+    TreeIDs: TIntegerArray;
+    TreePts: TPointArray;
+    Paths: array [0..1] of array of array of array of TPoint;   //diffdirections/difftreepaths/difflegs/diffvariances/pathofppoints
+    PathObs: array [0..1] of TBoolFuncArray;
+    ReqWC: Integer;
+  end;
+  
+  TLocation = record
+    Bank: string;
+    Name: string;
+    Trees: TStringArray;
+    TreeIDs: T2DIntegerArray;
+    TreePts: T2DPointArray;
+    Paths: array of array of array of array of TPoint;  //difftreepaths/difflegs/diffvariances/pathofppoints
+    PathObs: TBoolFuncArray;
+  end;
+
+const
+  LocCount = 1;
+  
+  tr_Regular = 0;
+  tr_Oak = 1;
+  tr_Willow = 2;
+  tr_Yew = 3;
+  tr_Maple = 4;
+  tr_Magic = 5;
+
+var
+  IZP: array of TPlayerInfo;
+  Locs: array [0..(LocCount - 1)]of TLocation;
+
+  LogIDs, TreeLevels: TIntegerArray;
+  LogNames: TStringArray;
+  RespawnTimes: TPointArray;
+
+procedure Error(PLoc: string);
+begin
+  WriteLn('Error: ' + PLoc);
+  Players[CurrentPlayer].Loc := PLoc;
+  Players[CurrentPlayer].Active := False;
+  LogOut;
+end;
+
+procedure DeclareInfo;
+begin
+
+  LogIDs := [];
+  LogNames := [];
+  RespawnTimes := [];
+  TreeLevels := [];
+  
+  with Locs[0] do
+  begin
+    Name := 'draynor';
+    Bank := 'db';
+    Trees := ['regular', 'oak', 'willow', 'yew'];
+    TreeIDs := [TIntegerArray([])];
+    TreePts := [TPointArray([])];
+
+    SetLength(Paths, Length(Trees));
+    
+    SetLength(Paths[tr_Regular], 1);
+    Paths[tr_Regular][0] := [TPointArray([])];
+
+    SetLength(Paths[tr_Oak], 1);
+    Paths[tr_Oak][0] := [TPointArray([])];
+
+    SetLength(Paths[tr_Willow], 1);
+    Paths[tr_Willow][0] := [TPointArray([])];
+
+    SetLength(Paths[tr_Yew], 1);
+    Paths[tr_Yew][0] := [TPointArray([])];
+    
+    SetLength(PathObs, 0);
+
+  end;
+  
+end;
+
+function Invert(Invertee: array of array of array of TPoint): array of array of array of TPoint;
+var
+  I, II, H: Integer;
+begin
+  for I := 0 to High(Invertee) do
+  begin
+    InvertATPA(Invertee[I]);
+    for II := 0 to High(Invertee[I]) do
+      InvertTPA(Invertee[I][II]);
+  end;
+  SetLength(Result, Length(Invertee));
+  H := High(Invertee);
+  for I := 0 to H do
+    Result[I] := Invertee[H - I];
+end;
+
+procedure InitPlayers;
+var
+  pyI, locI, trI, I, H: Integer;
+begin
+
+  SetLength(IZP, HowManyPlayers);
+  for pyI := 0 to HowManyPlayers - 1 do
+  begin
+  
+    for locI := 0 to LocCount - 1 do
+      if (Lowercase(Players[pyI].Strings[0]) = Locs[locI].Name) then
+        Break;
+    if (locI = LocCount) then
+    begin
+      WriteLn('Player ' + IntToStr(pyI) + ': Invalid Location');
+      Error('Invalid Loc');
+      Exit;
+    end;
+    
+    for trI := 0 to High(Locs[locI].Trees) do
+      if (Lowercase(Players[pyI].Strings[1]) = Locs[locI].Trees[trI]) then
+        Break;
+    if (trI = Length(Locs[locI].Trees)) then
+    begin
+      WriteLn('Player ' + IntToStr(pyI) + ': Invalid Tree for this Location');
+      Error('Invalid Tree');
+      Exit;
+    end;
+
+    with IZP[pyI] do
+    begin
+      Name := Locs[locI].Name;
+      Bank := Locs[locI].Bank;
+      Tree := Locs[locI].Trees[trI];
+      TreeIDs := Locs[locI].TreeIDs[trI];
+      TreePts := Locs[locI].TreePts[trI];
+      Paths[0] := Locs[locI].Paths[trI];
+      Paths[1] := Invert(Locs[locI].Paths[trI]);
+      PathObs[0] := Locs[locI].PathObs;
+      SetLength(PathObs[1], Length(PathObs[0]));
+      H := High(PathObs[1]);
+      for I := 0 to H do
+        PathObs[1][I] := PathObs[0][H - I];
+      ReqWC := TreeLevels[trI];
+    end;
+  
+  end;
+
+end;
+
+var
+  PT: Integer;
+
+begin
+  DeclarePlayers;
+  SetupSRL;
+
+  repeat
+  
+     PT := GetSystemTime + PlayerTime * RandomRange(800, 1200);
+     while (LoggedIn) and (GetSystemTime < PT) do
+     begin
+     
+     end;
+
+  until(AllPlayersInactive);
+
+end.
